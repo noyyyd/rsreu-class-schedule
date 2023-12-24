@@ -7,6 +7,7 @@ import (
 
 type ScheduleRepository interface {
 	GetScheduleTypes() ([]string, error)
+	GetScheduleFile(faculty string, studyType StudyType) (string, error)
 }
 
 func NewRepository(cfg *config.Config) ScheduleRepository {

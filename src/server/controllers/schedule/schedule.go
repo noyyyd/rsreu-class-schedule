@@ -2,16 +2,24 @@ package schedule
 
 import (
 	"fmt"
-	"github.com/gin-gonic/gin"
+	"log"
 	"net/http"
+	"rsreu-class-schedule/parser"
+	"rsreu-class-schedule/repository"
 	"rsreu-class-schedule/server/errors"
+
+	"github.com/gin-gonic/gin"
 )
 
 type GetRequest struct {
-	Type string `json:"type"`
+	Faculty string               `json:"faculty"`
+	Type    repository.StudyType `json:"type"`
 }
 
 func (r *GetRequest) ValidateRequest() error {
+	if r.Faculty == "" {
+		return fmt.Errorf("empty faculty")
+	}
 	if r.Type == "" {
 		return fmt.Errorf("empty schedule type")
 	}
@@ -26,5 +34,18 @@ func (c *Controller) GetSchedule(context *gin.Context) {
 		return
 	}
 
-	context.IndentedJSON(http.StatusOK, req)
+	path, err := c.repository.GetScheduleFile(req.Faculty, req.Type)
+	if err != nil {
+		context.IndentedJSON(errors.NewError500(err, "failed get file"))
+		return
+	}
+
+	schedules, err := parser.ParseSchedule2(path)
+	if err != nil {
+		log.Printf("failed parse schedule %s: %v", err)
+		context.IndentedJSON(errors.NewError500(err, ""))
+		return
+	}
+
+	context.IndentedJSON(http.StatusOK, schedules)
 }
