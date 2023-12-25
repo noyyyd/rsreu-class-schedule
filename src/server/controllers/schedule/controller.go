@@ -38,6 +38,8 @@ func (c *Controller) unmarshalRequest(context *gin.Context, dst interface{}) err
 		return err
 	}
 
+	log.Println(string(body))
+
 	err = json.Unmarshal(body, dst)
 	if err != nil {
 		log.Println(err)

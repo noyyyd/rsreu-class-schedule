@@ -16,5 +16,6 @@ func (c *Controller) GetScheduleTypes(context *gin.Context) {
 
 	context.Header("Access-Control-Allow-Origin", "*")
 	context.Header("Access-Control-Allow-Headers", "Content-Type")
+
 	context.JSON(http.StatusOK, scheduleTypes)
 }
