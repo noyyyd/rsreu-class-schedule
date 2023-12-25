@@ -1,9 +1,10 @@
 package schedule
 
 import (
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"rsreu-class-schedule/server/errors"
+
+	"github.com/gin-gonic/gin"
 )
 
 func (c *Controller) GetScheduleTypes(context *gin.Context) {

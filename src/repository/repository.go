@@ -3,11 +3,13 @@ package repository
 import (
 	"log"
 	"rsreu-class-schedule/config"
+
+	"github.com/xuri/excelize/v2"
 )
 
 type ScheduleRepository interface {
 	GetScheduleTypes() ([]string, error)
-	GetScheduleFile(faculty string, studyType StudyType) (string, error)
+	GetScheduleFile(faculty string, studyType StudyType) (*excelize.File, error)
 }
 
 func NewRepository(cfg *config.Config) ScheduleRepository {

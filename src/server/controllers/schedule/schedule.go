@@ -29,20 +29,20 @@ func (r *GetRequest) ValidateRequest() error {
 func (c *Controller) GetSchedule(context *gin.Context) {
 	req := new(GetRequest)
 
-	if err := c.unmarshalRequest(context.Request, req); err != nil {
+	if err := c.unmarshalRequest(context, req); err != nil {
 		context.IndentedJSON(errors.NewError400(err, "failed get request"))
 		return
 	}
 
-	path, err := c.repository.GetScheduleFile(req.Faculty, req.Type)
+	file, err := c.repository.GetScheduleFile(req.Faculty, req.Type)
 	if err != nil {
 		context.IndentedJSON(errors.NewError500(err, "failed get file"))
 		return
 	}
 
-	schedules, err := parser.ParseSchedule2(path)
+	schedules, err := parser.ParseSchedule(file)
 	if err != nil {
-		log.Printf("failed parse schedule %s: %v", err)
+		log.Printf("failed parse schedule %s: %v", file.Path, err)
 		context.IndentedJSON(errors.NewError500(err, ""))
 		return
 	}

@@ -1,17 +1,23 @@
 package parser
 
 import (
+	"errors"
 	"fmt"
-	"github.com/tealeg/xlsx"
 	"log"
+	"regexp"
 	"rsreu-class-schedule/entities"
 	"strings"
 	"time"
+
+	"github.com/xuri/excelize/v2"
 )
 
-const (
-	startTable        = "дни"
-	skipCellsForGroup = 3
+var (
+	startTable = "дни"
+
+	regexLesson = regexp.MustCompile(`(?P<name>.*\n)(?P<teacher>.*?\s)(?P<classroom>\d+.*)`)
+
+	nilLessonError = errors.New("lesson is empty")
 
 	regexGroupName      = "name"
 	regexGroupTeacher   = "teacher"
@@ -22,124 +28,181 @@ const (
 	countParsedElementsWithDates = 5
 )
 
-func ParseSchedule(filePath string) ([]*entities.Schedule, error) {
-	file, err := xlsx.OpenFile(filePath)
-	if err != nil {
-		log.Printf("failed open file %s: %v", filePath, err)
+type axisCounter struct {
+	coll    []int
+	row     int
+	minColl []int
+}
+
+func newAxisCounter() *axisCounter {
+	return &axisCounter{
+		coll:    []int{65},
+		row:     1,
+		minColl: []int{65},
+	}
+}
+
+func (a *axisCounter) nextColl() {
+	for i := range a.coll {
+		if a.coll[i] == 90 {
+			if i == len(a.coll)-1 {
+				a.coll = append(a.coll, 65)
+				break
+			}
+
+			continue
+		}
+
+		a.coll[i]++
+	}
+}
+
+func (a *axisCounter) setMinColl() {
+	copy(a.minColl, a.coll)
+}
+
+func (a *axisCounter) nextRow() {
+	a.row++
+	copy(a.coll, a.minColl)
+}
+
+func (a *axisCounter) String() string {
+	colls := make([]string, len(a.coll))
+
+	for i := range a.coll {
+		colls[i] = string(a.coll[i])
+	}
+
+	return fmt.Sprintf("%s%d", strings.Join(colls, ""), a.row)
+}
+
+func ParseSchedule(file *excelize.File) ([]*entities.Schedule, error) {
+	var err error
+
+	axis := newAxisCounter()
+
+	if len(file.GetSheetList()) == 0 {
+		err := fmt.Errorf("not found sheets")
+		log.Printf("failed open file %s: %v", file.Path, err)
 		return nil, err
 	}
 
-	if len(file.Sheets) == 0 {
-		err = fmt.Errorf("xlsx file %s doesn't have sheets: %v", filePath, err)
-		log.Println(err)
-		return nil, err
-	}
+	sheet := file.GetSheetList()[0]
 
-	rows := file.Sheets[0].Rows
+	rewindAxisToStart(file, sheet, axis)
+	schedules := createSchedules(file, sheet, axis)
 
-	rowStartID, cellStartID := getStartRowID(file)
-	schedules := createSchedulesForGroups(rows, rowStartID, cellStartID)
-
-	countGroup := len(schedules)
-
-	// так как уже прочитали данные групп
-	rowStartID += 1
-
-	var oldWeekday time.Weekday
-
-	cellStartIDIndex := cellStartID
-
-	// будем парсить до момента пока не словим конец, то есть когда день недели и время пары не будет пустое
-	for rows[rowStartID].Cells[cellStartIDIndex].Value != rows[rowStartID].Cells[cellStartIDIndex+1].Value {
-		weekday, err := getWeekday1(rows[rowStartID].Cells[cellStartIDIndex].Value)
+	for {
+		weekday, err := getWeekday(file, sheet, axis)
 		if err != nil {
-			weekday = oldWeekday
+			break
+		}
+		lessonTime, err := getLessonTime(file, sheet, axis)
+		if err != nil {
+			log.Printf("failed get lesson time %s: %v", file.Path, err)
+			break
+		}
+		weekType, err := getWeekType(file, sheet, axis)
+		if err != nil {
+			log.Printf("failed get week type %s: %v", file.Path, err)
+			break
 		}
 
-		if oldWeekday != weekday {
-			oldWeekday = weekday
-		}
-
-		// так как уже прочитали день недели
-		cellStartIDIndex += 1
-
-		var lessonsTime string
-		var cells []*xlsx.Cell
-
-		// считываем данные только по одной паре, поэтому добавляем двойку чтобы не читать лишнего
-		for i, row := range rows[rowStartID : rowStartID+2] {
-			cells = row.Cells
-
-			if i == 0 {
-				lessonsTime = getLessonsTime(cells[cellStartIDIndex].Value)
-			}
-
-			// делаем +1 так как уже считали время
-			cells = cells[cellStartIDIndex+1:]
-
-			var weekType entities.WeekType
-
-			// за одну итерацию берём значения для всех групп для одного типа недели
-			// +1 делаем чтобы захватить тип недели(числитель или знаменатель)
-			for i, cell := range cells[:countGroup+1] {
-				if i == 0 {
-					weekType, err = getWeekType1(cell.Value)
-					if err != nil {
-						log.Printf("failed parse lessons: %v", err)
-						break
-					}
+		for _, schedule := range schedules {
+			name, teacher, classroom, dates, err := getLessonInfo(file, sheet, axis)
+			if err != nil {
+				if err == nilLessonError {
 					continue
 				}
-
-				if cell.Value == "" {
-					continue
-				}
-
-				lesson, err := parseLesson(cell.Value, lessonsTime)
-				if err != nil {
-					log.Println(err)
-					break
-				}
-
-				schedules[i-1].SetLesson(weekday, weekType, lesson)
+				log.Printf("failed get lesson info %s: %v", file.Path, err)
+				break
 			}
+
+			schedule.SetLesson(weekday, weekType, entities.NewLesson(name, teacher, classroom, lessonTime, dates))
 		}
 
-		rowStartID += 2
-		cellStartIDIndex = cellStartID
+		axis.nextRow()
 	}
 
-	return schedules, nil
+	return schedules, err
 }
 
-func getStartRowID(file *xlsx.File) (int, int) {
-	for iRow, row := range file.Sheets[0].Rows {
-		for iCell, cell := range row.Cells {
-			if strings.ToLower(cell.Value) == startTable {
-				return iRow, iCell
-			}
+func getLessonInfo(
+	file *excelize.File,
+	sheet string,
+	axis *axisCounter,
+) (
+	name, teacher, classroom, dates string,
+	err error,
+) {
+	defer axis.nextColl()
+
+	value, err := file.GetCellValue(sheet, axis.String())
+	if err != nil {
+		log.Printf("failed get value from %s: %v", axis.String(), err)
+		return "", "", "", "", err
+	}
+
+	matches := regexLesson.FindStringSubmatch(value)
+
+	if len(matches) < countParsedElements {
+		if value == "" {
+			return "", "", "", "", nilLessonError
 		}
-	}
-	return 0, 0
-}
-
-func createSchedulesForGroups(rows []*xlsx.Row, rowStartID, cellStartID int) (schedules []*entities.Schedule) {
-	cells := rows[rowStartID].Cells
-
-	// добавляем skipCellsForGroup чтобы пропустить ячейки "дни", "часы" и
-	// одну пустую для указания числителя и знаменателя
-	for i := cellStartID + skipCellsForGroup; i < len(cells); i++ {
-		if cells[i].Value != "" {
-			schedules = append(schedules, entities.NewSchedule(strings.TrimSpace(cells[i].Value)))
-		}
+		return strings.TrimSpace(value), "", "", "", nil
 	}
 
-	return schedules
+	name = strings.TrimSpace(matches[regexLesson.SubexpIndex(regexGroupName)])
+	teacher = strings.TrimSpace(matches[regexLesson.SubexpIndex(regexGroupTeacher)])
+	classroom = strings.TrimSpace(matches[regexLesson.SubexpIndex(regexGroupClassroom)])
+
+	if len(matches) == countParsedElementsWithDates {
+		dates = strings.TrimSpace(matches[regexLesson.SubexpIndex(regexGroupDates)])
+	}
+
+	return
 }
 
-func getWeekday1(value string) (time.Weekday, error) {
-	if value == "" {
-		return 0, fmt.Errorf("empty weekday")
+func getWeekType(file *excelize.File, sheet string, axis *axisCounter) (entities.WeekType, error) {
+	defer axis.nextColl()
+
+	value, err := file.GetCellValue(sheet, axis.String())
+	if err != nil {
+		log.Printf("failed get value from %s: %v", axis.String(), err)
+		return 0, err
+	}
+
+	weekType := strings.ToLower(strings.TrimSpace(value))
+
+	switch weekType {
+	case "числ.":
+		return entities.WeekTypeNumerator, nil
+	case "знам.":
+		return entities.WeekTypeDenominator, nil
+	default:
+		return 0, fmt.Errorf("unexpected weektype: %s", weekType)
+	}
+}
+
+func getLessonTime(file *excelize.File, sheet string, axis *axisCounter) (string, error) {
+	defer axis.nextColl()
+
+	value, err := file.GetCellValue(sheet, axis.String())
+	if err != nil {
+		log.Printf("failed get value from %s: %v", axis.String(), err)
+		return "", err
+	}
+
+	return strings.ToLower(strings.TrimSpace(value)), nil
+}
+
+func getWeekday(file *excelize.File, sheet string, axis *axisCounter) (time.Weekday, error) {
+	defer axis.nextColl()
+
+	value, err := file.GetCellValue(sheet, axis.String())
+	if err != nil {
+		log.Printf("failed get value from %s: %v", axis.String(), err)
+		return 0, err
 	}
 
 	weekday := strings.ToLower(strings.TrimSpace(value))
@@ -164,39 +227,46 @@ func getWeekday1(value string) (time.Weekday, error) {
 	}
 }
 
-func getLessonsTime(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
+func createSchedules(file *excelize.File, sheet string, axis *axisCounter) (schedules []*entities.Schedule) {
+	for {
+		value, err := file.GetCellValue(sheet, axis.String())
+		if err != nil {
+			log.Printf("failed get value from %s: %v", axis.String(), err)
+			break
+		}
+
+		if value == "" {
+			break
+		}
+
+		schedules = append(schedules, entities.NewSchedule(strings.TrimSpace(value)))
+
+		axis.nextColl()
+	}
+
+	axis.nextRow()
+
+	return schedules
 }
 
-func getWeekType1(value string) (entities.WeekType, error) {
-	weekType := strings.ToLower(strings.TrimSpace(value))
+func rewindAxisToStart(file *excelize.File, sheet string, axis *axisCounter) {
+	for i := 0; i < 100; i++ {
+		for j := 0; j < 2; j++ {
+			value, _ := file.GetCellValue(sheet, axis.String())
 
-	switch weekType {
-	case "числ.":
-		return entities.WeekTypeNumerator, nil
-	case "знам.":
-		return entities.WeekTypeDenominator, nil
-	default:
-		return 0, fmt.Errorf("unexpected weektype: %s", weekType)
+			if strings.ToLower(strings.TrimSpace(value)) == startTable {
+				axis.setMinColl()
+
+				// скипаем бесполезные ячейки
+				axis.nextColl()
+				axis.nextColl()
+				axis.nextColl()
+				return
+			}
+
+			axis.nextColl()
+		}
+
+		axis.nextRow()
 	}
-}
-
-func parseLesson(value string, lessonsTime string) (*entities.Lesson, error) {
-	matches := regexLesson.FindStringSubmatch(value)
-
-	if len(matches) < countParsedElements {
-		return entities.NewLesson(strings.TrimSpace(value), "", "", lessonsTime, ""), nil
-	}
-
-	name := strings.TrimSpace(matches[regexLesson.SubexpIndex(regexGroupName)])
-	teacher := strings.TrimSpace(matches[regexLesson.SubexpIndex(regexGroupTeacher)])
-	classroom := strings.TrimSpace(matches[regexLesson.SubexpIndex(regexGroupClassroom)])
-
-	var dates string
-
-	if len(matches) == countParsedElementsWithDates {
-		dates = strings.TrimSpace(matches[regexLesson.SubexpIndex(regexGroupDates)])
-	}
-
-	return entities.NewLesson(name, teacher, classroom, lessonsTime, dates), nil
 }

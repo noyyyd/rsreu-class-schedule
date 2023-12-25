@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"rsreu-class-schedule/config"
 	"strings"
+
+	"github.com/xuri/excelize/v2"
 )
 
 type ScheduleFilesRepository struct {
@@ -47,7 +49,7 @@ func (r *ScheduleFilesRepository) GetScheduleTypes() ([]string, error) {
 	return scheduleTypes, nil
 }
 
-func (r *ScheduleFilesRepository) GetScheduleFile(faculty string, studyType StudyType) (string, error) {
+func (r *ScheduleFilesRepository) GetScheduleFile(faculty string, studyType StudyType) (*excelize.File, error) {
 	pathToFile := path.Join(r.schedulePath, faculty, studyType.String())
 
 	var name string
@@ -63,8 +65,16 @@ func (r *ScheduleFilesRepository) GetScheduleFile(faculty string, studyType Stud
 	})
 	if err != nil {
 		log.Printf("failed get schedule types form %s: %v", r.schedulePath, err)
-		return "", err
+		return nil, err
 	}
 
-	return path.Join(pathToFile, name), nil
+	filePath := path.Join(pathToFile, name)
+
+	file, err := excelize.OpenFile(filePath, excelize.Options{RawCellValue: true})
+	if err != nil {
+		log.Printf("failed open file %s: %v", filePath, err)
+		return nil, err
+	}
+
+	return file, nil
 }
