@@ -55,6 +55,10 @@ func (r *ScheduleFilesRepository) GetScheduleFile(faculty string, studyType Stud
 	var name string
 
 	err := filepath.Walk(pathToFile, func(path string, info fs.FileInfo, err error) error {
+		if info == nil {
+			return nil
+		}
+
 		if info.IsDir() {
 			return nil
 		}
