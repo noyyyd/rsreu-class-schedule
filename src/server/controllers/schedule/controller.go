@@ -28,9 +28,6 @@ func NewController(config *config.Config) *Controller {
 }
 
 func (c *Controller) unmarshalRequest(context *gin.Context, dst interface{}) error {
-	context.Header("Access-Control-Allow-Origin", "*")
-	context.Header("Access-Control-Allow-Headers", "Content-Type")
-
 	if dstType := reflect.TypeOf(dst); dstType.Kind() != reflect.Ptr && dstType.Kind() != reflect.Map {
 		return fmt.Errorf("dst struct is not pointer or map is %T", dst)
 	}

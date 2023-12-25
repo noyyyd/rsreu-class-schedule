@@ -10,9 +10,11 @@ import (
 func (c *Controller) GetScheduleTypes(context *gin.Context) {
 	scheduleTypes, err := c.repository.GetScheduleTypes()
 	if err != nil {
-		context.IndentedJSON(errors.NewError500(err, "failed get schedule types"))
+		context.JSON(errors.NewError500(err, "failed get schedule types"))
 		return
 	}
 
-	context.IndentedJSON(http.StatusOK, scheduleTypes)
+	context.Header("Access-Control-Allow-Origin", "*")
+	context.Header("Access-Control-Allow-Headers", "Content-Type")
+	context.JSON(http.StatusOK, scheduleTypes)
 }
