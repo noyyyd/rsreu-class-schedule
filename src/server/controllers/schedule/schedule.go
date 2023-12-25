@@ -47,5 +47,7 @@ func (c *Controller) GetSchedule(context *gin.Context) {
 		return
 	}
 
+	context.Header("Access-Control-Allow-Origin", "*")
+	context.Header("Access-Control-Allow-Headers", "Content-Type")
 	context.IndentedJSON(http.StatusOK, schedules)
 }
