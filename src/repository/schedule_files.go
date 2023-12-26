@@ -23,6 +23,10 @@ func (r *ScheduleFilesRepository) GetScheduleTypes() ([]string, error) {
 	scheduleTypes := make([]string, 0)
 
 	err := filepath.WalkDir(r.schedulePath, func(path string, d fs.DirEntry, err error) error {
+		if d == nil {
+			return nil
+		}
+
 		name := d.Name()
 
 		if name == config.SchedulesPath || !d.IsDir() {
